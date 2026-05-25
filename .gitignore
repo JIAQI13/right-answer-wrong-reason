@@ -1,0 +1,16 @@
+__pycache__/
+*.pyc
+.eggs/
+*.egg-info/
+.venv/
+.env
+.ipynb_checkpoints/
+results/generations/*/
+results/activations/*/
+results/analysis/*.csv
+results/analysis/*.md
+results/figures/*
+data/processed/*
+data/raw/*
+!data/raw/.gitkeep
+!data/processed/.gitkeep

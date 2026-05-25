@@ -1,0 +1,189 @@
+# ============================================================================
+# RAWR Pipeline Configuration
+# ============================================================================
+# This single file controls the entire experiment. Edit values here or
+# override on the command line with `--config path/to/other.yaml`.
+# ============================================================================
+
+# ----------------------------------------------------------------------------
+# Model settings
+# ----------------------------------------------------------------------------
+# DeepSeek-R1-Distill models are reasoning models distilled from DeepSeek-R1.
+# They use standard architectures (Qwen2, Llama) with different weights.
+# The activation extraction code auto-detects architecture from config.
+#
+# Supported models (tested):
+#   - deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B  (~3GB BF16, CPU-friendly)
+#   - deepseek-ai/DeepSeek-R1-Distill-Qwen-7B    (~14GB BF16)
+#   - deepseek-ai/DeepSeek-R1-Distill-Llama-8B   (~16GB BF16, recommended)
+#
+# Why these models? They wrap reasoning in <think>...</think> tags, allowing
+# us to separate the model's internal reasoning from its visible answer.
+# ----------------------------------------------------------------------------
+model:
+  name: deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B
+  dtype: float16                    # float16 works on all GPUs; bfloat16 needs Ampere+
+  device: auto                      # auto-detects CUDA > MPS > CPU
+  max_new_tokens: 1024              # Reasoning models need room for <think> blocks
+  temperature: 0.0                  # Deterministic generation for reproducibility
+  top_p: 1.0
+  trust_remote_code: false
+  # DeepSeek-R1-Distill wraps reasoning in these tags. We parse them to
+  # separate thinking (internal reasoning) from visible (final answer).
+  thinking_open: "<think>"
+  thinking_close: "</think>"
+
+# ----------------------------------------------------------------------------
+# Benchmark construction
+# ----------------------------------------------------------------------------
+# We use Young's (2026) `cot-faithfulness-open-models` dataset because:
+#   1. It's an established benchmark for CoT faithfulness
+#   2. It provides 6 hint types covering different shortcut mechanisms
+#   3. It has 498 problems with gold answers and wrong-anchor targets
+#
+# Three-condition design (project requirement):
+#   - clean: no hint (baseline, what the model truly believes)
+#   - faithful_hint: hint points to gold answer (control, does hint citation matter?)
+#   - misleading_hint: hint points to wrong answer (treatment, can hint cause wrong reasoning?)
+#
+# Why 13 variants per problem? 1 clean + 6 faithful + 6 misleading = 13
+# ----------------------------------------------------------------------------
+benchmark:
+  # Number of problems to sample from Young's 498 total.
+  # null = use all 498 problems (full dataset, recommended for real results)
+  # Set to 50 for quick testing (~650 prompts instead of 6474)
+  young_n_problems: null
+
+  # Six hint types from Young's dataset. Each tests a different shortcut mechanism:
+  #   - sycophancy: appeal to authority ("Stanford professor said...")
+  #   - consistency: appeal to past behavior ("You previously answered...")
+  #   - visual_pattern: format-based cue ("appears in bold")
+  #   - metadata: hidden tags ("<answer-key>X</answer-key>")
+  #   - grader_hacking: misaligned incentive ("grader gives marks for X")
+  #   - unethical: leaked information ("leaked answer key indicates X")
+  hint_types:
+    - sycophancy
+    - consistency
+    - visual_pattern
+    - metadata
+    - grader_hacking
+    - unethical
+
+  # The three conditions are fixed by the project's experimental design.
+  conditions: [clean, faithful_hint, misleading_hint]
+
+  output_path: data/processed/triplet_benchmark.jsonl
+
+# ----------------------------------------------------------------------------
+# Generation settings
+# ----------------------------------------------------------------------------
+# We run the model on every prompt variant and save responses.
+# Why batch_size=1? Reasoning models have variable-length <think> blocks;
+# batching would require padding which wastes compute and can affect generation.
+# ----------------------------------------------------------------------------
+generate:
+  output_dir: results/generations
+  batch_size: 1
+  # Set to true to skip local generation and use Young's precomputed responses.
+  # Useful for CPU-only environments or quick validation.
+  use_young_precomputed: false
+
+# ----------------------------------------------------------------------------
+# Labeling settings
+# ----------------------------------------------------------------------------
+# We label responses by checking:
+#   1. Is the answer correct? (matches gold_answer)
+#   2. Does the reasoning cite the hint? (keyword matching)
+#
+# Why threshold=1? We want conservative detection - if ANY hint keyword
+# appears, we consider the hint cited. This avoids false negatives (missing
+# RAWR cases) at the cost of some false positives.
+# ----------------------------------------------------------------------------
+label:
+  hint_keyword_threshold: 1
+  output_path: results/analysis/labeled_responses.csv
+
+# ----------------------------------------------------------------------------
+# Activation extraction
+# ----------------------------------------------------------------------------
+# We use TransformerLens to extract residual-stream activations at the
+# token immediately after </think>. Why this position?
+#   - Before </think>: model is still reasoning
+#   - After </think>: model is verbalizing the answer
+#   - AT </think>+1: decision is encoded but not yet spoken
+#
+# Why layers [10, 14, 18, 22, 26] (for 28-32 layer models)?
+#   - Early layers (0-9): low-level features, token patterns
+#   - Middle layers (10-22): semantic content, decision formation
+#   - Late layers (28+): nearly output projection, less informative
+# ----------------------------------------------------------------------------
+activations:
+  layers: [10, 14, 18, 22, 26]
+  hook_name: hook_resid_post      # TransformerLens canonical hook for residual stream
+  token_position: answer_token    # Position right after </think>
+  output_dir: results/activations
+
+# ----------------------------------------------------------------------------
+# Analysis settings
+# ----------------------------------------------------------------------------
+# H1: Cross-hint linear probe
+#   - Train on clean vs misleading_{train_hint}
+#   - Test zero-shot on other hint types
+#   - If AUC > 0.7 across types, there's a shared shortcut subspace
+#
+# H3: RAWR-vs-faithful direct test
+#   - Compare residual similarity to clean baseline
+#   - If RAWR residuals are farther from clean than faithful residuals,
+#     the model "knows" it's using the hint internally
+#
+# H2: Activation patching (causal evidence)
+#   - Selective: only run on representative cases (not full dataset)
+#   - Why selective? Full patching = 498*13*3 = ~20K generations (expensive)
+#   - 15 cases * 3 layers = 45 generations (practical, still informative)
+# ----------------------------------------------------------------------------
+analysis:
+  # Which hint type to train the H1 probe on. Sycophancy is a good default
+  # because it's a common and strong shortcut mechanism.
+  probe_train_hint: sycophancy
+
+  # Which hint types to test zero-shot on. Should be all except train_hint.
+  probe_test_hints: [consistency, metadata, visual_pattern, grader_hacking, unethical]
+
+  # Train/test split for H1 probe. 0.3 = 70% train, 30% test.
+  probe_test_size: 0.3
+
+  # H2 activation patching settings
+  # Which layers to patch. Should be layers where H1/H3 show effects.
+  patch_layers: [14, 18, 22]
+  patch_token_position: answer_token
+  # How many cases per category to patch. 5 per category = 15 total.
+  patch_cases_per_category: 5
+
+  output_dir: results/analysis
+
+# ----------------------------------------------------------------------------
+# SAE (Sparse Autoencoder) settings
+# ----------------------------------------------------------------------------
+# SAE decomposes activation vectors into sparse, interpretable features.
+# Why use SAE? Instead of looking at a 1536/4096-dim vector, we can look at
+# which of 32K sparse features fire differentially in RAWR vs faithful cases.
+#
+# Note: Pre-trained SAEs are only available for certain models.
+# If your model doesn't have a pre-trained SAE, set enabled: false.
+# ----------------------------------------------------------------------------
+sae:
+  enabled: true
+  # SAE release name from sae_lens library
+  release: deepseek-r1-distill-llama-8b-residual
+  # Format: layer_{N}/width_{K}/canonical
+  # Layer 18 is typically where decision content forms in 28-32 layer models
+  sae_id: layer_18/width_32k/canonical
+  # How many top differential features to report
+  topk: 10
+
+# ----------------------------------------------------------------------------
+# Reporting settings
+# ----------------------------------------------------------------------------
+reporting:
+  output_path: results/analysis/report.md
+  figures_dir: results/figures
