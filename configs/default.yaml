@@ -78,12 +78,19 @@ benchmark:
 # Generation settings
 # ----------------------------------------------------------------------------
 # We run the model on every prompt variant and save responses.
-# Why batch_size=1? Reasoning models have variable-length <think> blocks;
-# batching would require padding which wastes compute and can affect generation.
+# Why batch_size=8? GPUs are SIMD devices - they process multiple operations
+# in parallel. Running 1 prompt at a time wastes ~90% of GPU capacity.
+# With batch_size=8, we get ~8x throughput for ~same memory usage.
+#
+# Adjust based on your GPU memory:
+#   - RTX 3080 (8GB) + 1.5B model: batch_size=8-16
+#   - RTX 3080 (16GB) + 1.5B model: batch_size=16-32
+#   - RTX 3080 (16GB) + 7B/8B model: batch_size=4-8
+#   - A100 (40GB) + 8B model: batch_size=16-32
 # ----------------------------------------------------------------------------
 generate:
   output_dir: results/generations
-  batch_size: 1
+  batch_size: 16
   # Set to true to skip local generation and use Young's precomputed responses.
   # Useful for CPU-only environments or quick validation.
   use_young_precomputed: false

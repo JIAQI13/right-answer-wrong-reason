@@ -253,7 +253,9 @@ export HF_TOKEN=your_huggingface_token_here
 
 ---
 
-## Quick Start (5 Commands)
+## Quick Start
+
+### Option A: Using `make` (macOS/Linux)
 
 ```bash
 # 1. Clone and install
@@ -261,23 +263,70 @@ git clone <repo-url>
 cd right-answer-wrong-reason
 pip install -e .[dev,sae]
 
-# 2. Authenticate with HuggingFace (for DeepSeek weights)
+# 2. Authenticate with HuggingFace
+huggingface-cli login
+
+# 3. Run full pipeline
+make all
+```
+
+**Final report**: `results/analysis/report.md`
+
+---
+
+### Option B: Windows (No `make` required)
+
+Windows doesn't have `make` by default. Run the Python scripts directly:
+
+```powershell
+# 1. Clone and install
+git clone <repo-url>
+cd right-answer-wrong-reason
+pip install -e .[dev,sae]
+
+# 2. Authenticate with HuggingFace
 huggingface-cli login
 
 # 3. Build benchmark (498 problems × 13 variants = 6474 prompts)
-make benchmark
+python scripts/01_build_benchmark.py --config configs/default.yaml
 
-# 4. Generate responses (~1-2 hours on A100)
-make generate
+# 4. Generate responses (~10-12 hours on RTX 3080)
+python scripts/02_generate.py --config configs/default.yaml
 
-# 5. Full analysis (behavioral + mechanistic + SAE + patching)
-make analyze-behavior
-make analyze-mechanistic
+# 5. Label responses
+python scripts/03_label_behavior.py --config configs/default.yaml
+
+# 6. Extract activations
+python scripts/04_extract_activations.py --config configs/default.yaml
+
+# 7. Run analyses (H1 + H3 + SAE)
+python scripts/05_run_analyses.py --config configs/default.yaml
+
+# 8. Run activation patching (H2 - causal evidence)
+python scripts/07_run_patching.py --config configs/default.yaml
+
+# 9. Generate final report
+python scripts/06_make_report.py --config configs/default.yaml
 ```
 
-**Or one command**: `make all`
-
 **Final report**: `results/analysis/report.md`
+
+---
+
+### Option C: Install `make` on Windows (Optional)
+
+If you want to use `make` on Windows:
+
+```powershell
+# Using Chocolatey
+choco install make
+
+# Or using winget
+winget install GnuWin32.Make
+
+# Then you can use:
+make all
+```
 
 ---
 

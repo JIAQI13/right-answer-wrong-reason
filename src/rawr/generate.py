@@ -8,7 +8,7 @@ WHY DeepSeek-R1-Distill:
 
 Generation strategy:
   - temperature=0: deterministic generation for reproducibility
-  - batch_size=1: variable-length <think> blocks make batching inefficient
+  - batch_size=8: process multiple prompts in parallel for GPU utilization
   - chat template: models are trained with specific conversation formats
 
 Output: responses.jsonl with fields:
@@ -134,6 +134,8 @@ def main():
     ap.add_argument("--model", default=None)
     ap.add_argument("--limit", type=int, default=None,
                     help="cap total prompts (for dry runs)")
+    ap.add_argument("--batch-size", type=int, default=None,
+                    help="override batch size from config")
     args = ap.parse_args()
 
     cfg = yaml.safe_load(open(args.config))
@@ -156,6 +158,11 @@ def main():
     # WHY we need pad_token: generate() requires it for batch generation.
     if tok.pad_token is None:
         tok.pad_token = tok.eos_token
+    # Set padding side to LEFT for decoder-only generation.
+    # WHY left padding: In decoder-only models, the model predicts the next token
+    # based on the left context. With right padding, padding tokens would be
+    # in the "future" of the sequence, which can confuse the model.
+    tok.padding_side = "left"
 
     # Map config dtype string to torch dtype
     dtype_map = {"float16": torch.float16, "bfloat16": torch.bfloat16, "float32": torch.float32}
@@ -208,55 +215,118 @@ def main():
     open_tag = mcfg.get("thinking_open", "<think>")
     close_tag = mcfg.get("thinking_close", "</think>")
 
-    with out_path.open("w") as f:
-        for pid, cond, ht, prompt in tqdm(variants, desc=f"generate · {mcfg['name']}"):
-            # Format as chat conversation.
-            # WHY chat template: Models are trained with specific conversation
-            # formats. Using the wrong format can degrade performance.
-            messages = [{"role": "user", "content": prompt}]
+    # Batch size: config default is 8, but allow CLI override
+    # WHY batch_size=8: Good balance between GPU utilization and memory usage.
+    # For RTX 3080 (8GB) with 1.5B model, 8-16 prompts fit comfortably.
+    # For 7B/8B models, reduce to 2-4.
+    batch_size = args.batch_size if args.batch_size else gcfg.get("batch_size", 8)
 
-            # apply_chat_template may return a BatchEncoding or a tensor;
-            # normalize to a plain tensor on the correct device.
-            input_ids = tok.apply_chat_template(
-                messages, add_generation_prompt=True, return_tensors="pt"
-            )
-            if hasattr(input_ids, "input_ids"):
-                input_ids = input_ids.input_ids
-            input_ids = input_ids.to(model.device)
+    # Print progress info for Windows users
+    print(f"[info] Starting generation: {len(variants)} prompts")
+    print(f"[info] Using device: {device}")
+    print(f"[info] Batch size: {batch_size}")
+    print(f"[info] Progress bar will update after each batch completes")
+    print("-" * 60)
+
+    with out_path.open("w") as f:
+        # Process in batches for parallel GPU utilization
+        # WHY batching: GPUs are SIMD devices - they process multiple operations
+        # in parallel. Running 1 prompt at a time wastes ~90% of GPU capacity.
+        # With batch_size=8, we get ~8x throughput for ~same memory usage.
+        for batch_start in tqdm(range(0, len(variants), batch_size),
+                                desc=f"generate · {mcfg['name']}", ncols=80):
+            batch = variants[batch_start:batch_start + batch_size]
+
+            # Tokenize all prompts in batch with padding
+            # WHY padding: All sequences in a batch must have the same length.
+            # We pad to the longest sequence in the batch (not globally) to
+            # minimize wasted computation.
+            messages_list = [[{"role": "user", "content": prompt}]
+                            for (_, _, _, prompt) in batch]
+
+            # apply_chat_template for each prompt, then pad as a batch
+            # We do this individually first because apply_chat_template may
+            # add special tokens that vary by prompt (e.g., <think> auto-insertion)
+            input_ids_list = []
+            for messages in messages_list:
+                encoded = tok.apply_chat_template(
+                    messages, add_generation_prompt=True, return_tensors="pt",
+                )
+                if hasattr(encoded, "input_ids"):
+                    input_ids_list.append(encoded.input_ids[0])
+                else:
+                    input_ids_list.append(encoded[0])
+
+            # Pad the batch to same length (left padding for decoder-only)
+            # WHY left padding: For decoder-only generation, the model attends
+            # to tokens on the left. Right padding would put padding tokens
+            # in the "future" which can confuse causal attention.
+            max_len = max(ids.shape[0] for ids in input_ids_list)
+            padded_ids = []
+            attention_masks = []
+            for ids in input_ids_list:
+                pad_len = max_len - ids.shape[0]
+                # Left pad: prepend pad tokens
+                padded = torch.cat([
+                    torch.full((pad_len,), tok.pad_token_id, dtype=ids.dtype),
+                    ids
+                ])
+                # Attention mask: 1 for real tokens, 0 for padding
+                mask = torch.cat([
+                    torch.zeros(pad_len, dtype=torch.long),
+                    torch.ones(ids.shape[0], dtype=torch.long)
+                ])
+                padded_ids.append(padded)
+                attention_masks.append(mask)
+
+            input_ids = torch.stack(padded_ids).to(model.device)
+            attention_mask = torch.stack(attention_masks).to(model.device)
 
             # Generate with temperature=0 (deterministic).
             # WHY deterministic: Reproducibility is critical for research.
             # We want the same prompt to always produce the same response.
+            temp = mcfg.get("temperature", 0.0)
+            do_sample = temp > 0
+
+            gen_kwargs = {
+                "input_ids": input_ids,
+                "attention_mask": attention_mask,
+                "max_new_tokens": mcfg.get("max_new_tokens", 1024),
+                "do_sample": do_sample,
+                "pad_token_id": tok.pad_token_id,
+            }
+            if do_sample:
+                gen_kwargs["temperature"] = temp
+                gen_kwargs["top_p"] = mcfg.get("top_p", 1.0)
+
             with torch.no_grad():
-                out_ids = model.generate(
-                    input_ids,
-                    max_new_tokens=mcfg.get("max_new_tokens", 1024),
-                    temperature=mcfg.get("temperature", 0.0),
-                    do_sample=mcfg.get("temperature", 0.0) > 0,
-                    top_p=mcfg.get("top_p", 1.0),
-                    pad_token_id=tok.pad_token_id,
-                )
+                out_ids = model.generate(**gen_kwargs)
 
-            # Decode only the NEW tokens (not the input prompt)
-            response = tok.decode(out_ids[0, input_ids.shape[1]:], skip_special_tokens=False)
-            response = clean_byte_bpe(response)
+            # Decode each response in the batch
+            # We decode only the NEW tokens (not the input prompt)
+            for i, (pid, cond, ht, _) in enumerate(batch):
+                # Find where the input ends (skip padding on the left)
+                # The input_ids[i] has left padding, so we find the first non-pad token
+                input_len = (input_ids[i] != tok.pad_token_id).sum().item()
+                response = tok.decode(out_ids[i, input_len:], skip_special_tokens=False)
+                response = clean_byte_bpe(response)
 
-            # Split into thinking (internal) and visible (answer)
-            thinking, visible = split_thinking(response, open_tag, close_tag)
+                # Split into thinking (internal) and visible (answer)
+                thinking, visible = split_thinking(response, open_tag, close_tag)
 
-            # Write full record
-            f.write(json.dumps({
-                "problem_id": pid,
-                "condition": cond,
-                "hint_type": ht,
-                "prompt": prompt,
-                "response": response,
-                "thinking_text": thinking,
-                "visible_text": visible,
-                "extracted_answer": extract_answer(visible),
-                "model": mcfg["name"],
-                "ts": time.time(),
-            }) + "\n")
+                # Write full record
+                f.write(json.dumps({
+                    "problem_id": pid,
+                    "condition": cond,
+                    "hint_type": ht,
+                    "prompt": batch[i][3],
+                    "response": response,
+                    "thinking_text": thinking,
+                    "visible_text": visible,
+                    "extracted_answer": extract_answer(visible),
+                    "model": mcfg["name"],
+                    "ts": time.time(),
+                }) + "\n")
 
     print(f"✔ wrote {len(variants)} responses → {out_path}")
 
