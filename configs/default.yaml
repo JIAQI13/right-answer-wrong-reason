@@ -90,7 +90,7 @@ benchmark:
 # ----------------------------------------------------------------------------
 generate:
   output_dir: results/generations
-  batch_size: 256
+  batch_size: 128
   # Set to true to skip local generation and use Young's precomputed responses.
   # Useful for CPU-only environments or quick validation.
   use_young_precomputed: false
