@@ -136,6 +136,17 @@ def main():
     tl_base_model = get_tl_base_model(hf_model)
     print(f"[info] using TransformerLens config from {tl_base_model}")
 
+    # Monkey-patch AutoConfig.from_pretrained to avoid network download.
+    # Same fix as in activations.py - use already-loaded model's config.
+    from transformers import AutoConfig
+    _original_from_pretrained = AutoConfig.from_pretrained
+    def _patched_from_pretrained(pretrained_model_name_or_path, **kwargs):
+        if pretrained_model_name_or_path == tl_base_model:
+            print(f"[info] using loaded model's config for {tl_base_model}")
+            return hf_model.config
+        return _original_from_pretrained(pretrained_model_name_or_path, **kwargs)
+    AutoConfig.from_pretrained = staticmethod(_patched_from_pretrained)
+
     model = HookedTransformer.from_pretrained(
         tl_base_model,
         hf_model=hf_model,
@@ -144,7 +155,10 @@ def main():
         fold_ln=False,
         center_writing_weights=False,
         center_unembed=False,
+        local_files_only=True,
     )
+    # Restore original
+    AutoConfig.from_pretrained = staticmethod(_original_from_pretrained)
     del hf_model
     model.eval()
 

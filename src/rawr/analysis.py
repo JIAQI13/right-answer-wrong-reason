@@ -306,6 +306,10 @@ def main():
         except ImportError as e:
             print(f"[warn] SAE analysis skipped: {e}")
             print("[warn] Install with: pip install -e .[sae]")
+        except Exception as e:
+            print(f"[warn] SAE analysis skipped: {e}")
+            print("[warn] Note: Pre-trained SAEs are only available for Llama-8B model.")
+            print("[warn] Qwen-1.5B/Qwen-7B models don't have pre-trained SAEs.")
 
 
 if __name__ == "__main__":

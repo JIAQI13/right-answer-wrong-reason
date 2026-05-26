@@ -20,12 +20,16 @@ __pycache__/
 .venv/
 .env
 .ipynb_checkpoints/
+
+# Large generated files (optional to commit)
 results/generations/*/
 results/activations/*/
-results/analysis/*.csv
-results/analysis/*.md
 results/figures/*
 data/processed/*
 data/raw/*
 !data/raw/.gitkeep
 !data/processed/.gitkeep
+
+# Analysis results (commit these for reproducibility)
+# results/analysis/*.csv
+# results/analysis/*.md
