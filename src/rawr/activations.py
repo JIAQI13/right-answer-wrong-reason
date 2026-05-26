@@ -178,20 +178,27 @@ def main():
     tl_base_model = get_tl_base_model(hf_model)
     print(f"[info] using TransformerLens config from {tl_base_model}")
 
+    # Monkey-patch AutoConfig.from_pretrained to avoid network download.
+    # WHY: TransformerLens internally calls AutoConfig.from_pretrained(tl_base_model)
+    # to get architecture config, even when we pass hf_model. This fails if the
+    # base model isn't cached. Since our hf_model IS the same architecture
+    # (DeepSeek-R1-Distill-Qwen-1.5B = Qwen2-1.5B architecture), we can just
+    # return hf_model.config directly.
+    from transformers import AutoConfig
+    _original_from_pretrained = AutoConfig.from_pretrained
+    def _patched_from_pretrained(pretrained_model_name_or_path, **kwargs):
+        if pretrained_model_name_or_path == tl_base_model:
+            print(f"[info] using loaded model's config for {tl_base_model}")
+            return hf_model.config
+        return _original_from_pretrained(pretrained_model_name_or_path, **kwargs)
+    AutoConfig.from_pretrained = staticmethod(_patched_from_pretrained)
+
     # Wrap HF model with TransformerLens.
     # WHY fold_ln=False, center_writing_weights=False, center_unembed=False:
     #   - These defaults in TransformerLens normalize activations for interpretability.
     #   - We disable them to keep activations as close as possible to the original model.
     #   - This ensures our probes and distance metrics are computed on the
     #     actual activation distribution, not a normalized version.
-    #
-    # WHY local_files_only=True + try-except fallback:
-    #   - HookedTransformer.from_pretrained() tries to download config from HF even
-    #     when hf_model is provided. This fails in network-restricted environments
-    #     (e.g., China using hf-mirror.com).
-    #   - First try with local_files_only=True (use cache if available)
-    #   - If that fails, use from_pretrained_no_processing() which uses the HF
-    #     model's own config directly, no network access needed.
     dtype = torch.bfloat16 if mcfg.get("dtype") == "bfloat16" else torch.float16
     try:
         model = HookedTransformer.from_pretrained(
@@ -216,6 +223,8 @@ def main():
             center_unembed=False,
             local_files_only=True,
         )
+    # Restore original
+    AutoConfig.from_pretrained = staticmethod(_original_from_pretrained)
     del hf_model  # Free memory - we don't need the HF model anymore
     model.eval()
 
