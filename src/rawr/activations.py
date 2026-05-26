@@ -184,15 +184,38 @@ def main():
     #   - We disable them to keep activations as close as possible to the original model.
     #   - This ensures our probes and distance metrics are computed on the
     #     actual activation distribution, not a normalized version.
-    model = HookedTransformer.from_pretrained(
-        tl_base_model,
-        hf_model=hf_model,
-        tokenizer=hf_tok,
-        dtype=torch.bfloat16 if mcfg.get("dtype") == "bfloat16" else torch.float16,
-        fold_ln=False,
-        center_writing_weights=False,
-        center_unembed=False,
-    )
+    #
+    # WHY local_files_only=True + try-except fallback:
+    #   - HookedTransformer.from_pretrained() tries to download config from HF even
+    #     when hf_model is provided. This fails in network-restricted environments
+    #     (e.g., China using hf-mirror.com).
+    #   - First try with local_files_only=True (use cache if available)
+    #   - If that fails, use from_pretrained_no_processing() which uses the HF
+    #     model's own config directly, no network access needed.
+    dtype = torch.bfloat16 if mcfg.get("dtype") == "bfloat16" else torch.float16
+    try:
+        model = HookedTransformer.from_pretrained(
+            tl_base_model,
+            hf_model=hf_model,
+            tokenizer=hf_tok,
+            dtype=dtype,
+            fold_ln=False,
+            center_writing_weights=False,
+            center_unembed=False,
+            local_files_only=True,
+        )
+    except Exception as e:
+        print(f"[warn] from_pretrained failed ({e}), trying from_pretrained_no_processing...")
+        model = HookedTransformer.from_pretrained_no_processing(
+            tl_base_model,
+            hf_model=hf_model,
+            tokenizer=hf_tok,
+            dtype=dtype,
+            fold_ln=False,
+            center_writing_weights=False,
+            center_unembed=False,
+            local_files_only=True,
+        )
     del hf_model  # Free memory - we don't need the HF model anymore
     model.eval()
 
