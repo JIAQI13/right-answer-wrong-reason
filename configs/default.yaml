@@ -179,7 +179,7 @@ analysis:
 # If your model doesn't have a pre-trained SAE, set enabled: false.
 # ----------------------------------------------------------------------------
 sae:
-  enabled: true
+  enabled: false
   # SAE release name from sae_lens library
   release: deepseek-r1-distill-llama-8b-residual
   # Format: layer_{N}/width_{K}/canonical
