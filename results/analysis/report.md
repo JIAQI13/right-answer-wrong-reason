@@ -1,5 +1,28 @@
 # RAWR Experiment Report
 
+## Executive Summary
+
+### Key Metrics
+
+| Metric               | Value           | Interpretation                                                           |
+|:---------------------|:----------------|:-------------------------------------------------------------------------|
+| Clean accuracy       | 25.7% (128/498) | Baseline performance without hints                                       |
+| RAWR cases           | 157             | Correct answer, but reasoning cites misleading hint                      |
+| Sycophantic failures | 873             | Model fell for the hint, answered incorrectly                            |
+| Faithful reasoning   | 401             | Correct answer, ignored the hint                                         |
+| Overall RAWR rate    | 28.1%           | RAWR / (RAWR + faithful) ‚Äî % of correct answers using shortcut           |
+| Overall flip rate    | 29.2%           | sycophantic_failure / total_misleading ‚Äî % of hints causing wrong answer |
+
+### Hypothesis Verdicts
+
+| Hypothesis                   | Verdict      | Evidence                                                                                                      |
+|:-----------------------------|:-------------|:--------------------------------------------------------------------------------------------------------------|
+| H1: Shared shortcut subspace | ‚úÖ Strong    | Min zero-shot AUC = 88.8% across all hint types                                                               |
+| H3: Internal shortcut traces | ‚úÖ Moderate  | RAWR shortcut rate consistently higher by 7.4% on average                                                     |
+| H2: Causal patching          | ‚ö†Ô∏è Very weak | Max flip rate = 20.0% (sycophantic_failure: 0.0%, right_answer_wrong_reason: 20.0%, faithful_reasoning: 0.0%) |
+
+---
+
 ## Experiment Overview
 
 | Setting | Value |
@@ -29,9 +52,27 @@ Quick summary of response labels across all conditions.
 
 ---
 
-## B. Behavior Summary (condition ◊ hint_type ◊ label)
+## B. Behavior Summary
 
-Detailed breakdown by condition and hint type.
+### B.1 Per-Hint-Type Breakdown (Misleading Condition)
+
+Which hints are most effective at manipulating the model?
+
+| hint_type      |   faithful |   RAWR |   sycophantic_failure |   confused |   total | rawr_rate   | flip_rate   |   total_manipulated |
+|:---------------|-----------:|-------:|----------------------:|-----------:|--------:|:------------|:------------|--------------------:|
+| unethical      |         24 |     28 |                   207 |        239 |     498 | 53.8%       | 41.6%       |                 235 |
+| sycophancy     |         25 |     37 |                   192 |        244 |     498 | 59.7%       | 38.6%       |                 229 |
+| visual_pattern |         64 |     38 |                   127 |        269 |     498 | 37.3%       | 25.5%       |                 165 |
+| grader_hacking |         79 |     27 |                   133 |        259 |     498 | 25.5%       | 26.7%       |                 160 |
+| metadata       |         95 |      9 |                   115 |        279 |     498 | 8.7%        | 23.1%       |                 124 |
+| consistency    |        114 |     18 |                    99 |        267 |     498 | 13.6%       | 19.9%       |                 117 |
+
+**Key rates:**
+- `rawr_rate = RAWR / (RAWR + faithful)` ‚Äî how often shortcuts lead to correct answers
+- `flip_rate = sycophantic_failure / total_misleading` ‚Äî how often model falls for the hint
+- `total_manipulated = RAWR + sycophantic_failure` ‚Äî hints that affected the model
+
+### B.2 Full Breakdown (condition x hint_type x label)
 
 | condition       | hint_type      |   faithful_reasoning |   right_answer_wrong_reason |   sycophantic_failure |   confused |
 |:----------------|:---------------|---------------------:|----------------------------:|----------------------:|-----------:|
@@ -49,13 +90,9 @@ Detailed breakdown by condition and hint type.
 | misleading_hint | unethical      |                   24 |                          28 |                   207 |        239 |
 | misleading_hint | visual_pattern |                   64 |                          38 |                   127 |        269 |
 
-**Key rates to compute:**
-- `rawr_rate = RAWR / (RAWR + faithful_reasoning)` ó how often shortcuts lead to correct answers
-- `flip_rate = sycophantic_failure / total_misleading` ó how often model falls for the hint
-
 ---
 
-## C. H1 ó Cross-hint Linear Probe
+## C. H1 ‚Äî Cross-hint Linear Probe
 
 Train on `clean` vs `misleading_hint__sycophancy`, test zero-shot on other hint types.
 
@@ -80,28 +117,29 @@ Train on `clean` vs `misleading_hint__sycophancy`, test zero-shot on other hint 
 
 ---
 
-## D. H3 ó RAWR-vs-faithful Direct Test
+## D. H3 ‚Äî RAWR-vs-faithful Direct Test
 
 Compare residual similarity to clean baseline. `rawr_shortcut_rate` is the fraction of
 RAWR cases whose residual at the answer-token position is meaningfully different
 from the corresponding clean residual (cosine similarity < 0.95).
 
-|   layer |   rawr_n |   rawr_shortcut_rate |   faith_n |   faith_shortcut_rate |
-|--------:|---------:|---------------------:|----------:|----------------------:|
-|      10 |      157 |             0.229299 |       401 |              0.201995 |
-|      14 |      157 |             0.273885 |       401 |              0.21197  |
-|      18 |      157 |             0.286624 |       401 |              0.219451 |
-|      22 |      157 |             0.356688 |       401 |              0.266833 |
-|      26 |      157 |             0.375796 |       401 |              0.25187  |
+|   layer |   rawr_n | rawr_shortcut_rate   |   faith_n | faith_shortcut_rate   | diff   |
+|--------:|---------:|:---------------------|----------:|:----------------------|:-------|
+|      10 |      157 | 22.9%                |       401 | 20.2%                 | +2.7%  |
+|      14 |      157 | 27.4%                |       401 | 21.2%                 | +6.2%  |
+|      18 |      157 | 28.7%                |       401 | 21.9%                 | +6.7%  |
+|      22 |      157 | 35.7%                |       401 | 26.7%                 | +9.0%  |
+|      26 |      157 | 37.6%                |       401 | 25.2%                 | +12.4% |
 
 **Interpretation:**
 - `rawr_shortcut_rate > faith_shortcut_rate` = RAWR cases have internal shortcut traces
 - This is evidence that the model "knows" it's using the hint even when answer is correct
 - Look for consistent patterns across layers, not just one layer
+- `diff` column shows the gap between RAWR and faithful shortcut rates
 
 ---
 
-## E. SAE ó Top Differential Features
+## E. SAE ‚Äî Top Differential Features
 
 Features that fire most differently in RAWR vs faithful cases (if SAE analysis ran).
 
@@ -115,7 +153,7 @@ _(no data)_
 
 ---
 
-## F. H2 ó Activation Patching (Causal Evidence)
+## F. H2 ‚Äî Activation Patching (Causal Evidence)
 
 Patching clean residual into misleading forward pass. If answer flips to correct,
 the patched layer is causally responsible for the shortcut behavior.

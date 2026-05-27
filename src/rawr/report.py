@@ -6,10 +6,11 @@ WHY auto-generated report:
   - Includes interpretation guidance so readers understand what the numbers mean
 
 The report synthesizes:
+  Executive Summary: Key metrics + hypothesis verdicts
   A. Label counts (quick summary)
-  B. Behavior summary (condition × hint_type × label)
+  B. Behavior summary (condition x hint_type x label) with computed rates
   C. H1 - Cross-hint linear probe results
-  D. H3 - RAWR-vs-faithful direct test
+  D. H3 - RAWR-vs-faithful direct test (with difference column)
   E. SAE top differential features (if enabled)
   F. H2 - Activation patching results (if available)
 """
@@ -25,6 +26,18 @@ import yaml
 # Report template with interpretation guidance
 # WHY markdown: Easy to read, render, and version-control
 TPL = """# RAWR Experiment Report
+
+## Executive Summary
+
+### Key Metrics
+
+{key_metrics_table}
+
+### Hypothesis Verdicts
+
+{hypothesis_verdicts}
+
+---
 
 ## Experiment Overview
 
@@ -53,15 +66,22 @@ Quick summary of response labels across all conditions.
 
 ---
 
-## B. Behavior Summary (condition × hint_type × label)
+## B. Behavior Summary
 
-Detailed breakdown by condition and hint type.
+### B.1 Per-Hint-Type Breakdown (Misleading Condition)
+
+Which hints are most effective at manipulating the model?
+
+{per_hint_breakdown}
+
+**Key rates:**
+- `rawr_rate = RAWR / (RAWR + faithful)` — how often shortcuts lead to correct answers
+- `flip_rate = sycophantic_failure / total_misleading` — how often model falls for the hint
+- `total_manipulated = RAWR + sycophantic_failure` — hints that affected the model
+
+### B.2 Full Breakdown (condition x hint_type x label)
 
 {behavior_summary}
-
-**Key rates to compute:**
-- `rawr_rate = RAWR / (RAWR + faithful_reasoning)` — how often shortcuts lead to correct answers
-- `flip_rate = sycophantic_failure / total_misleading` — how often model falls for the hint
 
 ---
 
@@ -96,6 +116,7 @@ from the corresponding clean residual (cosine similarity < 0.95).
 - `rawr_shortcut_rate > faith_shortcut_rate` = RAWR cases have internal shortcut traces
 - This is evidence that the model "knows" it's using the hint even when answer is correct
 - Look for consistent patterns across layers, not just one layer
+- `diff` column shows the gap between RAWR and faithful shortcut rates
 
 ---
 
@@ -173,11 +194,238 @@ def safe_read_csv(path: Path) -> pd.DataFrame:
         return pd.DataFrame()
 
 
+def compute_key_metrics(label_counts: pd.DataFrame, behavior_summary: pd.DataFrame) -> pd.DataFrame:
+    """Compute key metrics from label counts.
+
+    Returns a DataFrame with metric, value, and interpretation columns.
+    """
+    if label_counts.empty:
+        return pd.DataFrame()
+
+    row = label_counts.iloc[0]
+    rawr = int(row.get("right_answer_wrong_reason", 0))
+    syco = int(row.get("sycophantic_failure", 0))
+    faith = int(row.get("faithful_reasoning", 0))
+    clean_correct = int(row.get("clean_correct", 0))
+
+    # Total misleading = sum of all misleading condition responses
+    total_misleading = rawr + syco + faith
+    if not behavior_summary.empty:
+        mis = behavior_summary[behavior_summary["condition"] == "misleading_hint"]
+        total_misleading = int(mis[["faithful_reasoning", "right_answer_wrong_reason", "sycophantic_failure", "confused"]].sum().sum())
+
+    # Total problems from clean condition
+    total_problems = 498  # default
+    if not behavior_summary.empty:
+        clean = behavior_summary[behavior_summary["condition"] == "clean"]
+        if not clean.empty:
+            total_problems = int(clean[["clean_correct", "clean_wrong"]].sum().sum())
+
+    clean_accuracy = clean_correct / total_problems if total_problems > 0 else 0
+    rawr_rate = rawr / (rawr + faith) if (rawr + faith) > 0 else 0
+    flip_rate = syco / total_misleading if total_misleading > 0 else 0
+
+    metrics = [
+        {
+            "Metric": "Clean accuracy",
+            "Value": f"{clean_accuracy:.1%} ({clean_correct}/{total_problems})",
+            "Interpretation": "Baseline performance without hints"
+        },
+        {
+            "Metric": "RAWR cases",
+            "Value": str(rawr),
+            "Interpretation": "Correct answer, but reasoning cites misleading hint"
+        },
+        {
+            "Metric": "Sycophantic failures",
+            "Value": str(syco),
+            "Interpretation": "Model fell for the hint, answered incorrectly"
+        },
+        {
+            "Metric": "Faithful reasoning",
+            "Value": str(faith),
+            "Interpretation": "Correct answer, ignored the hint"
+        },
+        {
+            "Metric": "Overall RAWR rate",
+            "Value": f"{rawr_rate:.1%}",
+            "Interpretation": "RAWR / (RAWR + faithful) — % of correct answers using shortcut"
+        },
+        {
+            "Metric": "Overall flip rate",
+            "Value": f"{flip_rate:.1%}",
+            "Interpretation": "sycophantic_failure / total_misleading — % of hints causing wrong answer"
+        },
+    ]
+
+    return pd.DataFrame(metrics)
+
+
+def compute_hypothesis_verdicts(
+    probe_df: pd.DataFrame,
+    rawr_df: pd.DataFrame,
+    patching_df: pd.DataFrame,
+    train_hint: str
+) -> str:
+    """Compute hypothesis verdicts based on results.
+
+    Returns a markdown table with hypothesis, verdict, and evidence.
+    """
+    verdicts = []
+
+    # H1: Cross-hint probe
+    h1_verdict = "❌ No"
+    h1_evidence = "Insufficient data"
+    if not probe_df.empty:
+        zs_cols = [c for c in probe_df.columns if c.startswith("auc_zs_")]
+        if zs_cols:
+            # Check Layer 18 if available, otherwise best layer
+            layer_18 = probe_df[probe_df["layer"] == 18]
+            if not layer_18.empty:
+                min_auc = layer_18[zs_cols].min().min()
+            else:
+                min_auc = probe_df[zs_cols].min().min()
+
+            if min_auc > 0.85:
+                h1_verdict = "✅ Strong"
+                h1_evidence = f"Min zero-shot AUC = {min_auc:.1%} across all hint types"
+            elif min_auc > 0.7:
+                h1_verdict = "✅ Moderate"
+                h1_evidence = f"Min zero-shot AUC = {min_auc:.1%}"
+            else:
+                h1_verdict = "⚠️ Weak"
+                h1_evidence = f"Min zero-shot AUC = {min_auc:.1%}"
+
+    verdicts.append({
+        "Hypothesis": "H1: Shared shortcut subspace",
+        "Verdict": h1_verdict,
+        "Evidence": h1_evidence
+    })
+
+    # H3: RAWR-vs-faithful
+    h3_verdict = "❌ No"
+    h3_evidence = "Insufficient data"
+    if not rawr_df.empty:
+        diffs = rawr_df["rawr_shortcut_rate"] - rawr_df["faith_shortcut_rate"]
+        all_positive = (diffs > 0).all()
+        avg_diff = diffs.mean()
+
+        if all_positive and avg_diff > 0.05:
+            h3_verdict = "✅ Moderate"
+            h3_evidence = f"RAWR shortcut rate consistently higher by {avg_diff:.1%} on average"
+        elif all_positive:
+            h3_verdict = "⚠️ Weak"
+            h3_evidence = f"RAWR shortcut rate higher but gap small ({avg_diff:.1%} avg)"
+        else:
+            h3_verdict = "❌ No"
+            h3_evidence = f"RAWR shortcut rate not consistently higher (avg diff: {avg_diff:.1%})"
+
+    verdicts.append({
+        "Hypothesis": "H3: Internal shortcut traces",
+        "Verdict": h3_verdict,
+        "Evidence": h3_evidence
+    })
+
+    # H2: Patching
+    h2_verdict = "❌ No"
+    h2_evidence = "Insufficient data"
+    if not patching_df.empty:
+        labels = patching_df["original_label"].unique()
+        flip_rates = []
+        for label in labels:
+            label_df = patching_df[patching_df["original_label"] == label]
+            flip_rate = label_df["flipped_to_correct"].mean()
+            flip_rates.append((label, flip_rate))
+
+        max_flip = max([r for _, r in flip_rates]) if flip_rates else 0
+        flip_summary = ", ".join([f"{l}: {r:.1%}" for l, r in flip_rates])
+
+        if max_flip > 0.5:
+            h2_verdict = "✅ Strong"
+            h2_evidence = f"Max flip rate = {max_flip:.1%} ({flip_summary})"
+        elif max_flip > 0.2:
+            h2_verdict = "⚠️ Weak"
+            h2_evidence = f"Max flip rate = {max_flip:.1%} ({flip_summary})"
+        elif max_flip > 0:
+            h2_verdict = "⚠️ Very weak"
+            h2_evidence = f"Max flip rate = {max_flip:.1%} ({flip_summary})"
+        else:
+            h2_verdict = "❌ No"
+            h2_evidence = f"No flips observed ({flip_summary})"
+
+    verdicts.append({
+        "Hypothesis": "H2: Causal patching",
+        "Verdict": h2_verdict,
+        "Evidence": h2_evidence
+    })
+
+    return pd.DataFrame(verdicts).to_markdown(index=False)
+
+
+def compute_per_hint_breakdown(behavior_summary: pd.DataFrame) -> pd.DataFrame:
+    """Compute per-hint-type RAWR and flip rates.
+
+    Returns a DataFrame sorted by total_manipulated descending.
+    """
+    if behavior_summary.empty:
+        return pd.DataFrame()
+
+    mis = behavior_summary[behavior_summary["condition"] == "misleading_hint"].copy()
+    if mis.empty:
+        return pd.DataFrame()
+
+    rows = []
+    for _, row in mis.iterrows():
+        ht = row["hint_type"]
+        faith = int(row.get("faithful_reasoning", 0))
+        rawr = int(row.get("right_answer_wrong_reason", 0))
+        syco = int(row.get("sycophantic_failure", 0))
+        confused = int(row.get("confused", 0))
+
+        total = faith + rawr + syco + confused
+        total_correct = faith + rawr
+        total_manipulated = rawr + syco
+
+        rawr_rate = rawr / total_correct if total_correct > 0 else 0
+        flip_rate = syco / total if total > 0 else 0
+
+        rows.append({
+            "hint_type": ht,
+            "faithful": faith,
+            "RAWR": rawr,
+            "sycophantic_failure": syco,
+            "confused": confused,
+            "total": total,
+            "rawr_rate": f"{rawr_rate:.1%}",
+            "flip_rate": f"{flip_rate:.1%}",
+            "total_manipulated": total_manipulated,
+        })
+
+    df = pd.DataFrame(rows)
+    return df.sort_values("total_manipulated", ascending=False)
+
+
+def enhance_rawr_df(rawr_df: pd.DataFrame) -> pd.DataFrame:
+    """Add difference column and format percentages for readability."""
+    if rawr_df.empty:
+        return rawr_df
+
+    df = rawr_df.copy()
+    df["diff"] = df["rawr_shortcut_rate"] - df["faith_shortcut_rate"]
+
+    # Format for display
+    df["rawr_shortcut_rate"] = df["rawr_shortcut_rate"].apply(lambda x: f"{x:.1%}")
+    df["faith_shortcut_rate"] = df["faith_shortcut_rate"].apply(lambda x: f"{x:.1%}")
+    df["diff"] = df["diff"].apply(lambda x: f"{x:+.1%}")
+
+    return df
+
+
 def summarize_patching(patching_df: pd.DataFrame) -> str:
     """Create a readable summary of patching results.
 
     WHY summary instead of raw data: Patching produces many rows
-    (N_cases × N_layers). A summary is easier to interpret.
+    (N_cases x N_layers). A summary is easier to interpret.
     """
     if patching_df.empty:
         return "_(patching not run or no results)_"
@@ -228,7 +476,7 @@ def main():
     sae_features = safe_read_csv(out_dir / "sae_top_features.csv")
     patching = safe_read_csv(out_dir / "patching_results.csv")
 
-    # Load behavior summary (has different format - index columns)
+    # Load behavior summary
     summary_path = Path(cfg["label"]["output_path"]).with_name("behavior_summary.csv")
     if summary_path.exists():
         try:
@@ -239,8 +487,18 @@ def main():
             summary_slim = summary[[c for c in key_cols if c in summary.columns]]
         except Exception:
             summary_slim = pd.DataFrame()
+            summary = pd.DataFrame()
     else:
         summary_slim = pd.DataFrame()
+        summary = pd.DataFrame()
+
+    # Compute derived metrics
+    key_metrics = compute_key_metrics(label_counts, summary)
+    hypothesis_verdicts = compute_hypothesis_verdicts(
+        probe, rawr, patching, cfg["analysis"]["probe_train_hint"]
+    )
+    per_hint = compute_per_hint_breakdown(summary)
+    rawr_enhanced = enhance_rawr_df(rawr)
 
     # Format config values for display
     bcfg = cfg["benchmark"]
@@ -255,10 +513,13 @@ def main():
         hint_types=", ".join(bcfg["hint_types"]),
         layers=str(cfg["activations"]["layers"]),
         train_hint=cfg["analysis"]["probe_train_hint"],
+        key_metrics_table=fmt(key_metrics),
+        hypothesis_verdicts=hypothesis_verdicts,
         label_counts=fmt(label_counts),
+        per_hint_breakdown=fmt(per_hint),
         behavior_summary=fmt(summary_slim),
         probe_results=fmt(probe),
-        rawr_vs_faithful=fmt(rawr),
+        rawr_vs_faithful=fmt(rawr_enhanced),
         sae_features=fmt(sae_features),
         patching_summary=summarize_patching(patching),
     )

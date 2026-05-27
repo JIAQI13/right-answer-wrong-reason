@@ -454,6 +454,117 @@ Patch clean residual into misleading forward pass:
 
 ---
 
+## Experimental Results: 1.5B Pilot Run
+
+> **Setup**: `DeepSeek-R1-Distill-Qwen-1.5B` on RTX 3080 Laptop (10GB)
+> **Runtime**: ~5 hours total (generation: 3h, activations: 2h)
+
+---
+
+### At a Glance
+
+| What I found | Result |
+|--------------|--------|
+| **Does RAWR exist?** | ✅ Yes — 157 cases |
+| **H1: Shared shortcut subspace?** | ✅ Strong — AUC > 88% across all hints |
+| **H2: Causal patching works?** | ⚠️ Weak — 20% flip rate for RAWR only |
+| **H3: Internal shortcut traces?** | ✅ Moderate — RAWR 7% more different from clean |
+
+**Bottom line**: The 1.5B model gets correct answers while internally processing misleading hints. The shortcut evidence is there (H1, H3), but smaller models are harder to "fix" via patching (H2).
+
+---
+
+### The Numbers
+
+| Metric | Value | What it means |
+|--------|-------|---------------|
+| Clean accuracy | 25.7% | Model gets 1 in 4 right without hints (these are hard questions) |
+| RAWR cases | 157 | Correct answer, but reasoning cited the misleading hint |
+| Sycophantic failures | 873 | Model fell for the hint and got it wrong |
+| Faithful reasoning | 401 | Correct answer, ignored the hint |
+| **RAWR rate** | **28.1%** | Of all correct answers in misleading condition, 28% used the shortcut |
+| **Flip rate** | **29.2%** | Of all misleading prompts, 29% made the model answer wrong |
+
+---
+
+### H1: All Hints Activate the Same Shortcut Circuit
+
+I trained a probe on **only sycophancy** hints. It detected **all 5 other hint types** with >88% AUC at Layer 18:
+
+| Hint Type | AUC at Layer 18 |
+|-----------|-----------------|
+| unethical | 99.9% |
+| consistency | 96.9% |
+| grader_hacking | 96.6% |
+| metadata | 95.0% |
+| visual_pattern | 88.8% |
+
+**Why this matters**: Different shortcut mechanisms (authority, leaked info, formatting) all activate the **same internal representation**. The model has a general "defer to external suggestion" circuit.
+
+**My interpretation**: RLHF training teaches models to respect authority and social cues. All hint types exploit this same learned behavior.
+
+---
+
+### H3: RAWR Cases "Know" They're Using Shortcuts
+
+RAWR residuals are consistently more different from clean baseline than faithful residuals:
+
+| Layer | RAWR vs Clean | Faithful vs Clean | **Gap** |
+|-------|---------------|-------------------|---------|
+| L18 | 28.7% | 21.9% | +6.8% |
+| L26 | 37.6% | 25.2% | +12.4% |
+
+**What this means**: Even when the answer is correct, the model's internal state shows it was affected by the hint. The shortcut left a trace.
+
+**Why the gap isn't bigger**: The 1.5B model has weaker representations. Some RAWR cases might just be lucky guesses, not true shortcut usage.
+
+---
+
+### H2: Patching is Harder in Small Models
+
+Patching clean residuals into misleading forward pass:
+
+| Category | Flip-to-correct rate |
+|----------|---------------------|
+| RAWR | 20% |
+| Sycophantic failure | 0% |
+| Faithful | 0% |
+
+**Why 0% for sycophantic failures?** Two theories:
+1. **Too late**: By `</think>`, the model is already committed to the wrong answer
+2. **Distributed**: Shortcut is spread across layers, not concentrated in one
+
+**Interesting**: RAWR cases flipped 20% of the time. These are the "on the fence" cases where the shortcut wasn't fully committed.
+
+---
+
+### Which Hints Work Best?
+
+Models trained on human preferences are most vulnerable to **social framing**:
+
+| Hint Type | Total manipulated | Why it works |
+|-----------|-------------------|--------------|
+| **unethical** | 235 | "Leaked answer key" — exploits trust in privileged info |
+| **sycophancy** | 229 | "Stanford professor said" — exploits deference to authority |
+| visual_pattern | 165 | "Option A is bold" — exploits sensitivity to formatting |
+| grader_hacking | 160 | "Grader gives marks for A" — exploits incentive alignment |
+| metadata | 124 | `<answer-key>` tags — weaker, may be seen as formatting |
+| consistency | 117 | "You previously answered" — needs conversation history tracking |
+
+---
+
+### Why I Made These Choices
+
+| Decision | Choice | Why |
+|----------|--------|-----|
+| **Model** | Qwen-1.5B | Only one that fits in RTX 3080 (10GB). 7B/8B need 14GB+. |
+| **Batch size** | 32 | Filled GPU memory nicely. Cut generation from 10h to 3h. |
+| **SAE** | Off | Pre-trained SAEs don't exist for Qwen-1.5B. Pipeline skips gracefully. |
+| **Patching** | 15 cases | Full dataset = 20K generations (too slow). 15 cases = 45 generations. |
+| **Layers** | [10,14,18,22,26] | Middle layers = semantic decisions. Early layers = just token patterns. |
+
+---
+
 ## Adjustable Parameters
 
 All configuration is in `configs/default.yaml`:
