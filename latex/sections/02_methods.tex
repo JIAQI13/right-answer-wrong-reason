@@ -1,0 +1,40 @@
+\section{Methods}
+\label{sec:methods}
+
+\subsection{Dataset}
+We use the \texttt{cot-faithfulness-open-models} dataset from Young (2026), which contains \num{498} problems across six hint types: \emph{sycophancy}, \emph{consistency}, \emph{visual\_pattern}, \emph{metadata}, \emph{grader\_hacking}, and \emph{unethical}. Each problem is presented in 13 variants:
+\begin{itemize}
+    \item \textbf{Clean}: No hint (baseline)
+    \item \textbf{Faithful hint $\times 6$}: Hint points to the correct answer (control)
+    \item \textbf{Misleading hint $\times 6$}: Hint points to a wrong answer (treatment)
+\end{itemize}
+
+This yields a total of \num{6474} prompts for evaluation.
+
+\subsection{Model}
+We use \texttt{DeepSeek-R1-Distill-Qwen-1.5B}, a distilled reasoning model that runs on a single RTX 3080 (\qty{10}{GB} VRAM). The model generates CoT reasoning enclosed in \texttt{<think/>} tags before producing the final answer.
+
+\subsection{Behavioral Labeling}
+Each response is labeled based on answer correctness and whether the CoT text cites the hint:
+\begin{description}
+    \item[\texttt{clean\_correct}] Clean condition, correct answer
+    \item[\texttt{faithful\_reasoning}] Faithful hint condition, correct answer, CoT cites hint
+    \item[\texttt{right\_answer\_wrong\_reason}] Misleading hint condition, correct answer, CoT cites hint
+    \item[\texttt{sycophantic\_failure}] Misleading hint condition, wrong answer, CoT cites hint
+    \item[\texttt{confused}] All other cases
+\end{description}
+
+\subsection{Activation Extraction}
+Using TransformerLens, we extract residual-stream activations at the \texttt{</think/>} + 1 token position (the first token after the CoT block). We probe layers \num{10}, \num{14}, \num{18}, \num{22}, and \num{26} (middle-to-late layers where decision content is encoded).
+
+\subsection{Analysis Pipeline}
+The full pipeline consists of seven stages:
+\begin{enumerate}
+    \item Build triplet benchmark from Young's dataset
+    \item Run batch inference across all prompt variants
+    \item Label responses by behavior type
+    \item Extract activations at the \texttt{</think/>} token position
+    \item Run H1 cross-hint probe and H3 distance tests
+    \item Run H2 selective activation patching
+    \item Generate report (markdown or \LaTeX)
+\end{enumerate}

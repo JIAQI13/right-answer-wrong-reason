@@ -18,7 +18,7 @@ PYTHON ?= python
 CONFIG ?= configs/default.yaml
 MODEL  ?= deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B
 
-.PHONY: install benchmark generate analyze-behavior analyze-mechanistic clean help all smoke
+.PHONY: install benchmark generate analyze-behavior analyze-mechanistic clean help all smoke report-latex latex-assets latex-compile
 
 help:
 	@echo "RAWR Pipeline — Right-Answer Wrong-Reason Detection"
@@ -35,6 +35,9 @@ help:
 	@echo "                         • SAE feature analysis (if enabled)"
 	@echo "                         • H2 activation patching (selective)"
 	@echo "                         • Auto-generated report"
+	@echo "  report-latex         Generate LaTeX assets + compile PDF report"
+	@echo "  latex-assets         Generate only LaTeX tables and figures"
+	@echo "  latex-compile        Compile existing LaTeX sources to PDF"
 	@echo "  smoke                Quick dry run (1.5B model, limited data)"
 	@echo "  all                  Run the full pipeline end-to-end"
 	@echo "  clean                Remove results/* and data/processed/*"
@@ -43,6 +46,7 @@ help:
 	@echo "  make all                                    # Full pipeline with default model"
 	@echo "  make generate MODEL=deepseek-ai/DeepSeek-R1-Distill-Llama-8B"
 	@echo "  make smoke                                  # Quick test"
+	@echo "  make report-latex                           # Generate PDF report from existing results"
 
 # ----------------------------------------------------------------------------
 # Installation
@@ -106,9 +110,29 @@ smoke:
 all: benchmark generate analyze-behavior analyze-mechanistic
 
 # ----------------------------------------------------------------------------
+# LaTeX Report Generation
+# ----------------------------------------------------------------------------
+# Generate LaTeX tables, plots, and compile the full PDF report.
+# Requires pdflatex to be installed on the system.
+# ----------------------------------------------------------------------------
+
+# Full pipeline: generate assets + compile PDF
+report-latex:
+	$(PYTHON) scripts/06_make_report.py --config $(CONFIG) --latex --compile
+
+# Generate only LaTeX tables and figures (no compilation)
+latex-assets:
+	$(PYTHON) scripts/06_make_report.py --config $(CONFIG) --latex
+
+# Compile existing LaTeX sources (assumes tables/figures already generated)
+latex-compile:
+	$(PYTHON) scripts/06_make_report.py --config $(CONFIG) --compile
+
+# ----------------------------------------------------------------------------
 # Cleanup
 # ----------------------------------------------------------------------------
 clean:
 	rm -rf results/generations/* results/activations/* results/analysis/* results/figures/*
 	rm -rf data/processed/*
+	rm -f latex/tables/*.tex latex/main.pdf latex/main.log latex/main.aux latex/main.out
 	@echo "✔ Workspace cleaned"

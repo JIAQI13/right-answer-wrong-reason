@@ -1,0 +1,24 @@
+\section{Introduction}
+\label{sec:introduction}
+
+Large language models (LLMs) trained with chain-of-thought (CoT) prompting often produce correct answers despite flawed reasoning. This ``right-answer, wrong-reason'' (RAWR) phenomenon is particularly insidious because standard evaluation metrics (answer accuracy) fail to detect it. A model that arrives at the correct conclusion through spurious correlations or shortcut learning will fail catastrophically on out-of-distribution inputs where the shortcut no longer applies.
+
+\subsection{The RAWR Problem}
+When a model is given a misleading hint that points to the wrong answer, it may:
+\begin{enumerate}
+    \item Ignore the hint and produce correct reasoning (faithful reasoning)
+    \item Use the hint to produce the wrong answer (sycophantic failure)
+    \item \emph{Cite the hint in its reasoning but still produce the correct answer} (RAWR)
+\end{enumerate}
+
+Case 3 is the critical failure mode: the model's verbalized reasoning acknowledges the misleading hint, yet somehow produces the correct answer. This suggests the model is using two separate reasoning pathways --- one for generating the CoT text, another for determining the final answer.
+
+\subsection{Our Approach}
+We combine \emph{behavioral analysis} (systematic hint perturbation) with \emph{mechanistic interpretability} (activation probing via TransformerLens) to detect RAWR internally. Our key insight is that the token immediately after \texttt{</think/>} is where the model ``has decided but hasn't spoken yet.'' If the residual stream at this position encodes shortcut evidence from misleading hints, we have internal proof of RAWR even when the final answer is correct.
+
+We test three hypotheses:
+\begin{description}
+    \item[H1] A linear probe trained to detect one hint type generalizes to unseen hint types (shared shortcut subspace).
+    \item[H2] Patching clean residuals into misleading-hint forward passes flips answers (causal evidence for shortcut encoding).
+    \item[H3] RAWR residuals are farther from clean residuals than faithful residuals are (internal trace of shortcut influence).
+\end{description}

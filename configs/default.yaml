@@ -194,3 +194,14 @@ sae:
 reporting:
   output_path: results/analysis/report.md
   figures_dir: results/figures
+
+  # LaTeX report generation
+  # When --latex flag is passed to 06_make_report.py, tables and plots are
+  # generated in the directories below. When --compile is passed, pdflatex
+  # compiles main.tex to main.pdf.
+  latex:
+    enabled: true
+    main_tex: latex/main.tex
+    tables_dir: latex/tables
+    figures_dir: latex/figures
+    output_pdf: latex/main.pdf

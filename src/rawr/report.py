@@ -13,14 +13,24 @@ The report synthesizes:
   D. H3 - RAWR-vs-faithful direct test (with difference column)
   E. SAE top differential features (if enabled)
   F. H2 - Activation patching results (if available)
+
+LaTeX support:
+  When --latex flag is passed, also generates:
+  - PDF plots in latex/figures/ (via plotting.py)
+  - LaTeX tables in latex/tables/ (via latex_tables.py)
+  - Optionally compiles the full PDF via pdflatex
 """
 from __future__ import annotations
 
 import argparse
+import os
+import subprocess
 from pathlib import Path
 
 import pandas as pd
 import yaml
+
+from rawr import latex_tables, plotting
 
 
 # Report template with interpretation guidance
@@ -461,11 +471,114 @@ def summarize_patching(patching_df: pd.DataFrame) -> str:
     return pd.DataFrame(summary_rows).to_markdown(index=False)
 
 
+def generate_latex_assets(
+    label_counts: pd.DataFrame,
+    behavior_summary: pd.DataFrame,
+    probe: pd.DataFrame,
+    rawr: pd.DataFrame,
+    patching: pd.DataFrame,
+    cfg: dict,
+) -> tuple[list[Path], list[Path]]:
+    """Generate LaTeX tables and plots from analysis artifacts.
+
+    Returns:
+        Tuple of (list_of_table_paths, list_of_plot_paths)
+    """
+    latex_cfg = cfg.get("reporting", {}).get("latex", {})
+    tables_dir = Path(latex_cfg.get("tables_dir", "latex/tables"))
+    figures_dir = Path(latex_cfg.get("figures_dir", "latex/figures"))
+
+    print("\nGenerating LaTeX tables...")
+    tables = latex_tables.generate_all_tables(
+        label_counts=label_counts,
+        behavior_summary=behavior_summary,
+        probe_results=probe,
+        rawr_df=rawr,
+        patching_df=patching,
+        output_dir=tables_dir,
+    )
+
+    print("\nGenerating LaTeX plots...")
+    plots = plotting.generate_all_plots(
+        label_counts=label_counts,
+        probe_results=probe,
+        rawr_df=rawr,
+        patching_df=patching,
+        output_dir=figures_dir,
+    )
+
+    return tables, plots
+
+
+def compile_latex(cfg: dict) -> Path | None:
+    """Compile the LaTeX document to PDF using pdflatex.
+
+    Runs pdflatex twice to ensure cross-references are resolved.
+    Automatically adds common TeX installation paths to the environment.
+
+    Returns:
+        Path to generated PDF, or None if compilation failed.
+    """
+    latex_cfg = cfg.get("reporting", {}).get("latex", {})
+    main_tex = Path(latex_cfg.get("main_tex", "latex/main.tex"))
+    output_pdf = Path(latex_cfg.get("output_pdf", "latex/main.pdf"))
+
+    if not main_tex.exists():
+        print(f"✗ LaTeX source not found: {main_tex}")
+        return None
+
+    # Build environment with common TeX paths
+    env = os.environ.copy()
+    tex_paths = [
+        "/Users/jiaqi.liu/.local/texlive/2026basic/bin/universal-darwin",
+        "/usr/local/texlive/2026basic/bin/universal-darwin",
+        "/Library/TeX/texbin",
+        "/usr/texbin",
+    ]
+    existing_path = env.get("PATH", "")
+    env["PATH"] = ":".join(tex_paths + [existing_path])
+
+    print(f"\nCompiling LaTeX: {main_tex}")
+
+    # Run pdflatex twice for cross-references
+    for i in range(2):
+        result = subprocess.run(
+            ["pdflatex", "-interaction=nonstopmode", "-output-directory", str(main_tex.parent), str(main_tex)],
+            capture_output=True,
+            text=True,
+            env=env,
+        )
+        if result.returncode != 0:
+            # Print relevant errors from stdout (pdflatex writes errors to stdout)
+            error_lines = [line for line in result.stdout.split("\n") if "!" in line or "Error" in line][-20:]
+            if not error_lines:
+                error_lines = result.stdout.strip().split("\n")[-30:]
+            print(f"✗ pdflatex pass {i+1} failed:")
+            print("\n".join(error_lines))
+            # Also check the log file
+            log_file = main_tex.with_suffix(".log")
+            if log_file.exists():
+                print(f"\nSee full log: {log_file}")
+            return None
+        print(f"  ✔ pdflatex pass {i+1} complete")
+
+    if output_pdf.exists():
+        print(f"\n✔ PDF report → {output_pdf}")
+        return output_pdf
+    return None
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--config", default="configs/default.yaml")
+    ap.add_argument("--latex", action="store_true", help="Generate LaTeX tables and plots")
+    ap.add_argument("--compile", action="store_true", help="Compile LaTeX to PDF (implies --latex)")
     args = ap.parse_args()
     cfg = yaml.safe_load(open(args.config))
+
+    # --compile implies --latex
+    if args.compile:
+        args.latex = True
 
     out_dir = Path(cfg["analysis"]["output_dir"])
 
@@ -524,11 +637,26 @@ def main():
         patching_summary=summarize_patching(patching),
     )
 
-    # Save report
+    # Save markdown report
     rep = Path(cfg["reporting"]["output_path"])
     rep.parent.mkdir(parents=True, exist_ok=True)
     rep.write_text(text)
-    print(f"✔ report → {rep}")
+    print(f"✔ markdown report → {rep}")
+
+    # Generate LaTeX assets if requested
+    if args.latex:
+        generate_latex_assets(
+            label_counts=label_counts,
+            behavior_summary=summary_slim,
+            probe=probe,
+            rawr=rawr,
+            patching=patching,
+            cfg=cfg,
+        )
+
+    # Compile LaTeX if requested
+    if args.compile:
+        compile_latex(cfg)
 
 
 if __name__ == "__main__":

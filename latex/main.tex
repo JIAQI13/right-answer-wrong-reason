@@ -1,0 +1,46 @@
+\documentclass[11pt, a4paper]{article}
+
+% Essential packages (load order matters!)
+\usepackage{booktabs}       % Clean tables (matches Pandas to_latex output)
+\usepackage{graphicx}       % Include PDF figures
+\usepackage{subcaption}     % Side-by-side figures
+\usepackage{siunitx}        % Consistent number/unit formatting
+\usepackage{geometry}       % Page margins
+\usepackage{float}          % Figure placement [H]
+\usepackage{caption}        % Better caption formatting
+\usepackage{hyperref}       % Hyperlinks (must come before cleveref)
+\usepackage{cleveref}       % Smart cross-referencing (\cref{})
+\usepackage{bookmark}       % PDF bookmarks (must come after hyperref)
+
+% Page setup
+\geometry{margin=1in}
+
+% Graphic path - Python saves plots here
+\graphicspath{{figures/}}
+
+% siunitx setup
+\sisetup{group-digits=none}
+
+% Title
+\title{Right-Answer, Wrong-Reason (RAWR): \\ Mechanistic Detection of Shortcut Reasoning in Open-Weight Models}
+\author{RAWR Research Pipeline}
+\date{\today}
+
+\begin{document}
+
+\maketitle
+
+\begin{abstract}
+We detect ``right-answer, wrong-reason'' (RAWR) failures in open-weight reasoning models by combining behavioral analysis with mechanistic interpretability. Using TransformerLens activation probing at the \texttt{</think/>} token position, we identify when a model's internal residual stream encodes shortcut evidence from misleading hints, even when the final answer is correct. We evaluate three hypotheses across six hint types using the DeepSeek-R1-Distill-Qwen-1.5B model.
+\end{abstract}
+
+\input{sections/01_introduction.tex}
+\input{sections/02_methods.tex}
+\input{sections/03_behavioral_results.tex}
+\input{sections/04_mechanistic_results.tex}
+\input{sections/05_discussion.tex}
+
+\bibliographystyle{plain}
+\bibliography{references}
+
+\end{document}

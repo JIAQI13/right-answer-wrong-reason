@@ -1,0 +1,37 @@
+\section{Behavioral Results}
+\label{sec:behavioral}
+
+\subsection{Overall Label Distribution}
+The distribution of behavioral labels across all \num{6474} responses is shown in \Cref{tab:label_counts} and \Cref{fig:label_distribution}.
+
+\begin{table}[H]
+    \centering
+    \input{tables/label_counts.tex}
+    \caption{Overall distribution of behavioral labels across all \num{6474} responses.}
+    \label{tab:label_counts}
+\end{table}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.8\textwidth]{label_distribution.pdf}
+    \caption{Distribution of behavioral labels. RAWR cases (right-answer-wrong-reason) represent the critical failure mode where the model cites misleading hints but still produces correct answers.}
+    \label{fig:label_distribution}
+\end{figure}
+
+\subsection{Behavior by Condition and Hint Type}
+\Cref{tab:behavior_summary} breaks down the label distribution by condition (clean / faithful\_hint / misleading\_hint) and hint type.
+
+\begin{table}[H]
+    \centering
+    \small
+    \input{tables/behavior_summary.tex}
+    \caption{Behavioral label counts by condition and hint type.}
+    \label{tab:behavior_summary}
+\end{table}
+
+Key observations:
+\begin{itemize}
+    \item The \texttt{misleading\_hint} condition produces the most RAWR cases, as expected.
+    \item Hint types vary in their effectiveness at inducing shortcut reasoning.
+    \item The \texttt{clean} condition serves as a baseline for normal reasoning behavior.
+\end{itemize}

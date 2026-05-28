@@ -1,0 +1,31 @@
+\section{Discussion}
+\label{sec:discussion}
+
+\subsection{Summary of Findings}
+Our three hypotheses receive varying levels of support:
+
+\paragraph{H1 (Cross-hint probe generalization):} Strongly supported. The linear probe trained on sycophancy hints shows excellent zero-shot generalization to other hint types (minimum AUC > \num{0.85} at layer \num{18}), indicating a shared shortcut subspace across different forms of spurious correlation.
+
+\paragraph{H2 (Activation patching):} Weakly supported. Patching clean residuals produces modest answer flip rates, suggesting that while shortcut information is present in the residual stream, it may be distributed across multiple layers or require more targeted intervention.
+
+\paragraph{H3 (RAWR-vs-faithful distance):} Strongly supported. RAWR residuals are consistently farther from clean residuals than faithful residuals are (average difference of \qty{7.4}{\percent}), providing an internal trace of shortcut influence even when the final answer is correct.
+
+\subsection{Implications}
+The existence of a shared shortcut subspace (H1) suggests that shortcut detection mechanisms could generalize across different types of spurious correlations, making them practical to implement. The H3 distance test provides a lightweight, unsupervised method for detecting RAWR cases without requiring labeled hint types.
+
+\subsection{Limitations}
+This study has several limitations:
+\begin{itemize}
+    \item We evaluate only one model (\texttt{DeepSeek-R1-Distill-Qwen-1.5B}); results may differ for larger models or different architectures.
+    \item The activation patching effect sizes are small; more sophisticated patching strategies (e.g., path patching) may yield stronger effects.
+    \item We probe only at the \texttt{</think/>} token position; other positions may reveal different aspects of shortcut processing.
+\end{itemize}
+
+\subsection{Future Work}
+Future directions include:
+\begin{itemize}
+    \item Evaluating across a wider range of models and sizes.
+    \item Developing automated RAWR detection for deployment in safety-critical applications.
+    \item Investigating whether the shortcut subspace can be ablated to improve reasoning faithfulness.
+    \item Extending the analysis to SAE (Sparse Autoencoder) features for more fine-grained interpretability.
+\end{itemize}

@@ -1,0 +1,57 @@
+\section{Mechanistic Results}
+\label{sec:mechanistic}
+
+\subsection{H1: Cross-Hint Probe Generalization}
+We train a linear probe on residual activations from the \emph{sycophancy} hint type and test its zero-shot performance on the other five hint types. \Cref{tab:probe_results} and \Cref{fig:probe_auc} show the AUC scores.
+
+\begin{table}[H]
+    \centering
+    \input{tables/probe_results.tex}
+    \caption{H1 cross-hint probe AUC scores per layer. The probe is trained on sycophancy hints and tested zero-shot on other hint types.}
+    \label{tab:probe_results}
+\end{table}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.8\textwidth]{probe_auc.pdf}
+    \caption{H1 cross-hint probe AUC across layers. Strong zero-shot generalization (AUC > 0.85) indicates a shared shortcut subspace across hint types.}
+    \label{fig:probe_auc}
+\end{figure}
+
+Layer \num{18} consistently shows the strongest probe performance, suggesting this is where shortcut evidence is most strongly encoded in the residual stream.
+
+\subsection{H2: Activation Patching}
+We patch clean-condition residuals into misleading-hint forward passes at specific layers and measure answer flip rates. \Cref{tab:patching_results} and \Cref{fig:patching_flips} show the results.
+
+\begin{table}[H]
+    \centering
+    \input{tables/patching_results.tex}
+    \caption{H2 activation patching results. Percentage of cases where patching clean residuals flipped the model's answer.}
+    \label{tab:patching_results}
+\end{table}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.8\textwidth]{patching_flips.pdf}
+    \caption{H2 activation patching answer flip rates by layer. Higher flip rates indicate stronger causal evidence that the layer encodes shortcut information.}
+    \label{fig:patching_flips}
+\end{figure}
+
+\subsection{H3: RAWR-vs-Faithful Distance Test}
+We measure the distance of RAWR and faithful residuals from clean-condition residuals in the same layer. If RAWR residuals are systematically farther from clean than faithful residuals, this provides an internal trace of shortcut influence. \Cref{tab:rawr_vs_faithful} and \Cref{fig:rawr_vs_faithful} show the results.
+
+\begin{table}[H]
+    \centering
+    \input{tables/rawr_vs_faithful.tex}
+    \caption{H3 RAWR-vs-faithful distance test. Shortcut detection rate is the percentage of cases where RAWR residuals are farther from clean than faithful residuals.}
+    \label{tab:rawr_vs_faithful}
+\end{table}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.8\textwidth]{rawr_vs_faithful.pdf}
+    \caption{H3 RAWR-vs-faithful shortcut detection rates across layers. Values above 50\% indicate RAWR residuals are systematically farther from clean than faithful residuals.}
+    \label{fig:rawr_vs_faithful}
+\end{figure}
+
+The consistent detection rate above \qty{50}{\percent} across layers confirms that RAWR residuals carry measurable traces of shortcut influence.
